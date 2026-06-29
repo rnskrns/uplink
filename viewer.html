@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>링크 하이라이트 - 시청자</title>
+  <script src="https://static.sooplive.com/asset/app/extension-helper/soop-extension-sdk.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --card: rgba(14,15,22,0.90);
+      --border: rgba(91,110,245,0.25);
+      --accent: #5b6ef5;
+      --accent-glow: rgba(91,110,245,0.3);
+      --warn: #f5a623;
+      --text: #e8e9f0;
+      --muted: #7a7d96;
+      --radius: 10px;
+    }
+    body {
+      background: transparent;
+      color: var(--text);
+      font-family: 'Segoe UI', 'Noto Sans KR', sans-serif;
+      font-size: 13px;
+      display: flex;
+      align-items: flex-end;
+      min-height: 100vh;
+      padding: 12px;
+    }
+    .panel {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 13px;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 4px 28px rgba(0,0,0,0.55);
+    }
+    .panel-header {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+    }
+    .live-dot {
+      width: 7px; height: 7px; background: var(--accent);
+      border-radius: 50%; box-shadow: 0 0 6px var(--accent);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
+    .panel-title { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+    .link-list { display: flex; flex-direction: column; gap: 6px; }
+    .link-btn {
+      display: flex; align-items: center; gap: 10px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 8px; padding: 10px 12px;
+      color: var(--text); cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, transform 0.1s;
+      width: 100%; text-align: left;
+    }
+    .link-btn:hover {
+      background: rgba(91,110,245,0.12);
+      border-color: var(--border);
+      transform: translateX(3px);
+    }
+    .link-btn:active { transform: scale(0.98); }
+    .link-icon {
+      width: 30px; height: 30px; background: rgba(91,110,245,0.18);
+      border-radius: 7px; display: flex; align-items: center;
+      justify-content: center; font-size: 14px; flex-shrink: 0;
+    }
+    .link-text { flex: 1; min-width: 0; }
+    .link-name {
+      font-size: 13px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .link-sub {
+      display: flex; align-items: center; gap: 6px; margin-top: 2px;
+    }
+    .d-tag {
+      font-size: 10px; font-weight: 700; padding: 1px 5px;
+      border-radius: 4px; flex-shrink: 0;
+    }
+    .d-tag.warn { background: rgba(245,166,35,0.18); color: var(--warn); }
+    .d-tag.ok   { background: rgba(91,110,245,0.15); color: var(--accent); }
+    .link-deadline { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .arrow { color: var(--accent); font-size: 14px; flex-shrink: 0; }
+    .empty-state { text-align: center; padding: 18px; color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+<div class="panel">
+  <div class="panel-header">
+    <div class="live-dot"></div>
+    <span class="panel-title">스트리머 링크</span>
+  </div>
+  <div class="link-list" id="linkList">
+    <div class="empty-state">불러오는 중...</div>
+  </div>
+</div>
+
+<script>
+  let links = [];
+  let timer;
+
+  window.addEventListener('load', () => {
+    if (typeof Soop !== 'undefined') {
+      Soop.ext.onContext(() => loadLinks());
+      Soop.ext.listen((msg) => {
+        try {
+          const data = JSON.parse(msg);
+          if (data.type === 'UPDATE_LINKS') { links = data.links || []; render(); }
+        } catch(e) {}
+      });
+    } else {
+      loadLinks();
+    }
+    // D-tag 매분 갱신
+    timer = setInterval(render, 60000);
+  });
+
+  function loadLinks() {
+    try {
+      const saved = localStorage.getItem('soop_hl_links');
+      if (saved) links = JSON.parse(saved);
+    } catch(e) { links = []; }
+    render();
+  }
+
+  function getDTag(deadline) {
+    const diff = Math.ceil((new Date(deadline) - new Date()) / 86400000);
+    if (diff < 0)  return null;                              // 만료 → 숨김
+    if (diff === 0) return { label: 'D-Day', cls: 'warn' };
+    if (diff <= 3)  return { label: `D-${diff}`, cls: 'warn' };
+    return { label: `D-${diff}`, cls: 'ok' };
+  }
+
+  function fmtDeadline(iso) {
+    const d = new Date(iso);
+    return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')} 마감`;
+  }
+
+  function getIcon(url) {
+    const h = (new URL(url)).hostname.toLowerCase();
+    if (h.includes('youtube'))   return '▶️';
+    if (h.includes('twitter') || h.includes('x.com')) return '🐦';
+    if (h.includes('instagram')) return '📸';
+    if (h.includes('discord'))   return '💬';
+    if (h.includes('naver'))     return '🟢';
+    if (h.includes('soop') || h.includes('afreeca')) return '📺';
+    return '🔗';
+  }
+
+  function openLink(url) {
+    if (typeof Soop !== 'undefined') {
+      Soop.ext.openPopup(url, { width: 960, height: 640 });
+    } else {
+      window.open(url, '_blank', 'noopener');
+    }
+  }
+
+  function render() {
+    const list = document.getElementById('linkList');
+    // 만료된 링크 제외
+    const visible = links.filter(l => getDTag(l.deadline) !== null);
+
+    if (visible.length === 0) {
+      list.innerHTML = `<div class="empty-state">등록된 링크가 없습니다.</div>`;
+      return;
+    }
+
+    list.innerHTML = visible.map(l => {
+      const dtag = getDTag(l.deadline);
+      let icon = '';
+      try { icon = getIcon(l.url); } catch(e) { icon = '🔗'; }
+      return `
+      <button class="link-btn" onclick="openLink('${esc(l.url)}')">
+        <div class="link-icon">${icon}</div>
+        <div class="link-text">
+          <div class="link-name">${esc(l.name)}</div>
+          <div class="link-sub">
+            <span class="d-tag ${dtag.cls}">${dtag.label}</span>
+            <span class="link-deadline">${fmtDeadline(l.deadline)}</span>
+          </div>
+        </div>
+        <span class="arrow">→</span>
+      </button>`;
+    }).join('');
+  }
+
+  function esc(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;');
+  }
+</script>
+</body>
+</html>
